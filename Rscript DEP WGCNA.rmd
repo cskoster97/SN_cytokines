@@ -1,0 +1,445 @@
+---
+title: "Rscript_DEP_WGCNA"
+output: html_document
+date: "2023-08-09"
+author: "Carli"
+update: 
+    chunk_output_type: console
+---
+If necessary, download the required libraries
+```{r}
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install(version = "3.16")
+
+BiocManager::install("DESeq2")
+install.packages("dplyr")
+install.packages("readxl")
+```
+Load the data (that is not LOG transformed!)
+```{r}
+data <- read_excel("cortex_raw.xlsx") #THIS IS THE DATA THAT IS NOT LOG TRANSFORMED
+colnames(data) # to see what is the "Genes" column
+```
+
+Remove duplicated genes
+```{r}
+# Are there any duplicated gene names?
+data$Genes %>% 
+  duplicated() %>% 
+  any()
+
+# Make a table of duplicated gene names
+data %>% group_by(Genes) %>% summarize(frequency = n()) %>% 
+  arrange(desc(frequency)) %>% filter(frequency > 1)
+
+#For further analysis these proteins must get unique names. 
+
+# Make unique names using the annotation in the "Gene.names" column as primary names and the annotation in "Protein.IDs" as name for those that do not have an gene name.
+data_unique <- make_unique(data, "Genes", "Protein.Ids")
+colnames(data_unique)
+
+# Are there any duplicated names?
+#check in the newly created column "name
+data_unique$name %>% duplicated() %>% any()
+```
+
+#Generate or export a summarized experiment
+#First, load an experimental design
+experimental_design<- read_excel("metadata_cortex.xlsx")
+head(experimental_design)
+
+#Now, generate a se using data_unique and experimental_design
+LFQ_columns <- grep("LF", colnames(data_unique))
+data_se<-make_se(data_unique, LFQ_columns, experimental_design)
+
+# Let's have a look at the SummarizedExperiment object
+data_se
+
+# Plot a barplot of the protein identification overlap between samples
+plot_frequency(data_se)
+
+# Filter for proteins that have no missing values (the most stringent filter) IN THIS CASE I WILL NOT USE THIS
+#complete_cases <- filter_proteins(data_se, "complete")
+#plot_missval(complete_cases) #ERROR: 
+#plot_numbers(complete_cases)
+
+# Filter for proteins that are identified in all replicates of at least one condition I DID NOT USE THIS EITHER
+#data_filt <- filter_missval(data_se, thr = 0)
+
+# Less stringent filtering:
+# Filter for proteins that are identified in 2 out of 3 replicates of at least one condition (I USED THIS)
+data_filt2 <- filter_missval(data_se, thr = 1)
+
+# Plot a barplot of the number of identified proteins per samples
+plot_numbers(data_filt2)
+
+#data_se is the data before filtering...
+plot_numbers(data_se)
+
+# Plot a barplot of the protein identification overlap between samples
+#plot_numbers(complete_cases)
+
+#NORMALIZATION
+
+# Normalize the data
+data_norm <- normalize_vsn(data_filt2)
+
+meanSdPlot(data_norm)
+
+# Visualize normalization by boxplots for all samples before and after normalization
+plot_normalization(data_filt2, data_norm)
+
+# Plot a heatmap of proteins with missing values
+plot_missval(data_filt2)
+plot_missval(data_norm)
+
+# Plot intensity distributions and cumulative fraction of proteins with and without missing values
+plot_detect(data_norm)
+
+#Impute missing data using random draws from a manually defined left-shifted Gaussian distribution (for MNAR)
+data_imp_man <- impute(data_norm, fun = "man", shift = 1.5, scale = 0.000001)
+
+
+# Plot intensity distributions before and after imputation
+plot_imputation(data_norm, data_imp_man)
+
+# Visualize normalization by boxplots for all samples before and after normalization
+plot_normalization(data_norm, data_imp_man)
+
+#There is no need for imputation in our sampleset because we used the most stringent filtering
+
+write.table(assay(data_imp_man), file="normalized_and_imputed_cortex_nr.csv")
+normalized_imp_cortex_nr<-assay(data_imp_man)
+
+
+
+
+##Differential enrichment analysis  based on linear models and empherical Bayes statistics
+
+# Test manually defined comparisons (all comparisons)
+data_diff_all_contrasts <- test_diff(data_imp_man, type = "all")
+dep <- add_rejections(data_diff_all_contrasts, alpha =0.5, lfc= 0.5) #THIS SET THE THRESHOLDS FOR ADJUSTED P VALUE OF 0.5 AND LOG2FC OF 1
+
+# Plot the first and second principal components
+plot_pca(dep, x = 1, y = 2, n = 100, point_size = 4, indicate = c("condition"), label = FALSE)
+
+
+#Plot the Pearson correlation matrix
+plot_cor(dep, significant=TRUE, lower = 0.8, upper = 1, pal = "Reds")
+
+# Plot a heatmap of all significant proteins with the data centered per protein
+plot_heatmap(dep,type="centered", 
+             clustering_distance="pearson",
+             col_limit=3, indicate = "condition")
+
+# Plot a heatmap of all significant proteins (rows) and the tested contrasts (columns)
+plot_heatmap(dep, type = "contrast", kmeans = TRUE, col_limit = 4, show_row_names = TRUE)
+
+#Plot a volcano plot for the contrast "WT.KO.Strain_vs_Polb.HT"
+plot_volcano(dep, contrast = "WT.KO.Strain_vs_Polb.HT", label_size = 2, add_names = TRUE)
+
+#Plot a volcano plot for the contrast "Polb.HT_vs_WT.C567.Strain"
+plot_volcano(dep, contrast = "Polb.HT_vs_WT.C567.Strain", label_size = 2, add_names = TRUE)
+
+#Plot a volcano plot for the contrast "WT.KO.Strain_vs_WT.C567.Strain"
+plot_volcano(dep, contrast = "WT.KO.Strain_vs_WT.C567.Strain", label_size = 2, add_names = TRUE)
+
+#Plot a volcano plot for the contrast "Polb.HT_vs_X3xPB_Control"
+plot_volcano(dep, contrast = "Polb.HT_vs_X3xPB_Control", label_size = 2, add_names = TRUE)
+
+#Plot a volcano plot for the contrast "Polb.HT_vs_X3xPB_NR"
+plot_volcano(dep, contrast = "Polb.HT_vs_X3xPB_NR", label_size = 2, add_names = TRUE)
+
+#Plot a volcano plot for the contrast "X3xPB_Control_vs_X3xPB_NR"
+plot_volcano(dep, contrast = "X3xPB_Control_vs_X3xPB_NR", label_size = 2, add_names = TRUE)
+
+
+# Plot a barplot 
+plot_single(dep, proteins = c("Mtnd1"), type="centered", plot=TRUE)
+
+# Extract the results
+# Generate a results table
+data_results_cortex_DEP <- get_results(dep)
+
+# Number of significant proteins
+data_results_cortex_DEP %>% filter(significant) %>% nrow()
+# Column names of the results table
+colnames(data_results_cortex_DEP)
+write.csv(data_results_cortex_DEP, file="data_DEP_cortex.csv")
+
+# Generate a wide data.frame
+df_wide <- get_df_wide(dep)
+# Generate a long data.frame
+df_long <- get_df_long(dep)
+
+#EXPORT THE DATAFRAME OF THIS DEP ANALYSIS
+#write.table(df_wide, file="DEP_RESULTS_STRINGENT FILTERING.xls")
+
+##Now we can start with WGCNA PIPELINE
+#If not installed yet, please install WCGNA by removing the hashtag from next line
+#BiocManager::install("WGCNA", force = TRUE, lib="/Library/Frameworks/R.framework/Versions/4.2/Resources/library")
+#library(WGCNA, lib.loc="/Library/Frameworks/R.framework/Versions/4.2/Resources/library")
+library(WGCNA)
+# The following setting is important, do not omit.
+options(stringsAsFactors = FALSE);
+
+#QC and outlier detection
+#read normalized data from DEP
+proteomic_data <- normalized_imp_cortex_nr
+
+gsg<-goodSamplesGenes(t(proteomic_data))
+summary(gsg) #IF THEY ARE ANY GENES THAT ARE DETECTED TO BE OUTLIERS WILL BE SHOWN HERE
+gsg$allOK #if this is true, this data passed the test and you don't need to extract those outliers
+
+# if this is false, this data needs to be filtered
+#remove genes that are detected as outliers
+
+proteomic_data<-proteomic_data[gsg$goodGenes == TRUE,]
+
+
+#ANOTHER METHOD TO DETECT OUTLIERS IS TO PERFORM HIERARCHICAL CLUSTERIN
+htree<-hclust(dist(t(proteomic_data)), method="average")
+plot(htree)
+head(htree)
+#based on this plot, there is no strong segregation between samples enough to remove one
+
+#based on this plot, only WT.C567.Strain_4 is a clear outlier#Another method to perform quality control is to perform principal component analysis
+pca<-prcomp(t(proteomic_data))
+pca.dat<-pca$x
+pca.var<-pca$sdev^2
+pca.var.percent<-round(pca.var/sum(pca.var)*100, digits=2)
+library(ggplot2)
+pca.dat<-as.data.frame(pca.dat)
+
+ggplot(pca.dat, aes(PC1, PC2))+
+         geom_point()+
+         geom_text(label = rownames(pca.dat))+
+         labs(x=paste0('PC1:', pca.var.percent[1], "%"),
+              y=paste0("PC2:", pca.var.percent[2], "%"))
+#I decided to remove the sample at the RIGHT
+  #based on these plots, only WT.C567.Strain_4 is a clear outlier
+#exclude the outlier
+samples.to.be.excluded<-c("WT.C567.Strain_4")
+data.subset<-proteomic_data[,!(colnames(proteomic_data) %in% samples.to.be.excluded)]
+
+#Network construction
+#Choose a set of soft-thresholding powers
+power<-c(c(1:10), seq(from=12, to=50, by=2))
+
+#Call the network topology analysis function
+sft<-pickSoftThreshold(t(data.subset), #the data.subset was to be transposed!!
+                       powerVector = power, 
+                       networkType = "signed",
+                       verbose=5)
+
+sftdata<-sft$fitIndices
+#we will use the max R square values and the minimum mean connectivity
+names(sftdata)
+#visualize to pick the indices
+a1<-ggplot(sftdata,aes(Power, SFT.R.sq, label= Power))+
+  geom_point()+
+  geom_text(nudge_y=0.1)+
+  geom_hline(yintercept=0.8, color="red")+
+  labs(x="Power", y="Scale free topology model fit, signed R^2")+
+  theme_classic()
+
+#plot for mean connectivity
+a2 <- ggplot(sftdata, aes(Power, mean.k., label = Power)) +
+  geom_point() +
+  geom_text(nudge_y = 0.1) +
+  labs(x = 'Power', y = 'Mean Connectivity') +
+  theme_classic()
+
+library(gridExtra)
+library(grid)
+library(ggplot2)
+library(lattice)
+
+grid.arrange(a1, a2, nrow = 2)
+
+#Convert matrix to numeric
+norm.data<-sapply(proteomic_data, as.numeric)
+
+soft_power<-8
+tem_cor<-cor
+cor<-WGCNA::cor
+
+#memory estimate blocksize
+bwnet<-blockwiseModules(t(data.subset),
+                        maxBlockSize = 8000,
+                        TOMType = "signed",
+                        power = soft_power,
+                        mergeCutHeight = 0.25,
+                        numericLabels = FALSE,
+                        randomseed=1234,
+                        verbose=3)
+
+
+#Module eigengenes
+module_eigengenes<-bwnet$MEs
+
+#Print out a preview 
+head(module_eigengenes)
+
+table(bwnet$colors)
+
+length(bwnet$dendrograms[[1]]$order)
+length(bwnet$colors)
+
+plotDendroAndColors(bwnet$dendrograms[[1]], 
+                    cbind(bwnet$unmergedColors, bwnet$colors), 
+                    c("unmerged", "merged"), 
+                    dendroLabels = FALSE, 
+                    addGuide = TRUE,
+                    hang= 0.03, 
+                    guideHang = 0.05)
+
+
+# get number of genes for each module
+table(bwnet$colors)
+
+
+#Next step is to use the metadata file to categorize variables to separate samples and to finally correlate modules to traits (metadata variables)
+
+#load metadata file
+library(readxl)
+library(dplyr)
+colData <- read_excel("metadata_cortex.xlsx")
+
+#exclude LFQ.intensity.Sple-14 from the metadata
+samples.to.be.excluded<-c("LFQ.intensity.Sple-14")
+colData.subset<-colData[!(colData$label %in% samples.to.be.excluded),]
+
+#create traits file (binarize categorical variables)
+#traits<-colData%>%
+#  mutate(disease_state_bin= ifelse(grepl("AD", disease_state), 1, 0))%>% #this will assign a 1 for AD and a 0 for Control and Control + from both brain areas
+#  select(9)
+
+#traits_tau<-colData %>%
+#  mutate(tau_bin= ifelse(grepl("Pos", tau_load), 1, 0))%>%
+#  select(9)#this will assign a 1 for tau+ samples
+
+#traits_amyloid<-colData%>%
+#  mutate(amyloid_bin= ifelse(grepl("Pos", amyloid_load), 1, 0))%>%
+#  select(9)#this will assign a 1 for tau+ samples
+
+#To compare everything against everything
+colData.subset$condition<- factor(colData.subset$condition, levels = c("WT/KO Strain", "Polb HT", "WT.C567 Strain", "3xPB_Control", "3xPB_NR"))
+
+traits_nr<-binarizeCategoricalColumns(colData.subset$`Treatment Group`,
+                                          includePairwise=TRUE,
+                                          includeLevelVsAll = FALSE,
+                                          minCount = 1)
+
+traits_atp<-c(colData.subset$ATP)
+traits_ROS_O2<-c(colData.subset$`ROS 02`)
+traits_ROS_H202<-c(colData.subset$`ROS H202`)
+traits_RNS_NO<-c(colData.subset$`RNS NO`)
+traits_RNS_ONOO<-c(colData.subset$`RNS ONOO-`)
+traits_RSS_H2S<-c(colData.subset$`RSS H2S`)
+traits_RSS_H2Sn<-c(colData.subset$`RSS H2Sn`)
+traits_RCS<-c(colData.subset$`RCS (NBD-H)`)
+
+
+colnames(colData.subset)
+
+
+#combining traits data with all the binarized variables
+traits<-cbind(traits_nr, 
+              traits_atp,
+              traits_ROS_O2,
+              traits_ROS_H202,
+              traits_RNS_NO,
+              traits_RNS_ONOO,
+              traits_RSS_H2S,
+              traits_RSS_H2Sn,
+              traits_RCS)
+traits1<-traits[,-3]
+traits2<-traits1[,-1]
+
+colnames(traits2)
+
+#define number of samples and genes
+nSamples<-ncol(data.subset)
+nrow(colData.subset)
+nGenes<-nrow(proteomic_data)
+
+##Correlation of traits and variables
+#correlation of modules and trits using pearson correlation
+
+module_trait_corr<-cor(module_eigengenes, traits2, use="p") #this runs because there are 29 and 29 
+module_trait_corr_pvals<-corPvalueStudent(module_trait_corr, nSamples)
+
+#Visualize module trait association as a heatmap
+
+heatmap.data<-merge(module_eigengenes, traits, by="row.names")
+head(heatmap.data)
+
+rownames(heatmap.data)<-heatmap.data$Row.names
+heatmap.data1<-heatmap.data[-1]
+
+
+
+#install.packages("corrplot")
+library("corrplot")
+
+corrplot(t(as.matrix(module_trait_corr)),
+         method="color",
+         p.mat = t((as.matrix(module_trait_corr_pvals))),
+         insig = "label_sig",
+         tl.col= "black")
+
+
+#BOX PLOT FOR PLOT OF INTEREST
+modules<-tibble::rownames_to_column(module_eigengenes,"sample")
+modules$sample<-colData.subset$condition
+modules$sample<-as.factor(modules$condition)
+modules_joined<-dplyr::inner_join(modules, colData.subset %>%
+                                    dplyr::select(`sample label`, condition),
+                                  by= c("sample"="condition")
+)
+
+
+p1<- ggplot(modules, aes(x=sample, y=MEskyblue, color=sample)) + 
+  geom_boxplot() + theme_test() + theme(legend.position = "none")
+
+p2<-ggplot(modules, aes(x=sample, y=MElightgreen, color=sample)) + 
+  geom_boxplot() + theme_test() + theme(legend.position = "none")
+
+p3<-ggplot(modules, aes(x=sample, y=MEyellow, color=sample)) + 
+  geom_boxplot() + theme_test() + theme(legend.position = "none")
+
+p4<-ggplot(modules, aes(x=sample, y=MEsalmon, color=sample)) + 
+  geom_boxplot() + theme_test() + theme(legend.position = "none")
+
+p5<-ggplot(modules, aes(x=sample, y=MEpaleturquoise, color=sample)) + 
+  geom_boxplot() + theme_test() + theme(legend.position = "none")
+
+p6<-ggplot(modules, aes(x=sample, y=MEcyan, color=sample)) + 
+  geom_boxplot() + theme_test() + theme(legend.position = "none")
+
+
+
+grid.arrange(p1) 
+
+
+
+#Get the genes/proteins that are included in the modules for amyloid association
+module.gene.mapping<-as.data.frame(bwnet$colors)
+module.gene.mapping%>%
+  filter(`bwnet$colors`==c("blue")%>% #i use royalblue becuase it was positively associated to tau load in the WGCNA 
+  rownames()
+
+#in order to get a list and put it into metascape or do downstream Gene Ontology
+amyloid_associated_module<-module.gene.mapping%>% 
+  filter(`bwnet$`==c("blue"))%>%
+  rownames()
+
+
+#to get all modules
+write.table(module.gene.mapping, file="module_gene_mapping.csv")
+
+
+
+
