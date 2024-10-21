@@ -1,5 +1,5 @@
 ---
-title: "Rscript Data Analysis coculture_EpCAM_fibroblasts"
+title: "Rscript DeSeq2 Analysis SN + cytokines"
 output: html_document
 date: "2023-03-23"
 editor_options: 
@@ -51,22 +51,23 @@ Load metadata and counts files
 ```{r}
 # load the metadata and rowcount.csv file
 setwd("G:/My Drive/RNAseq/Carli_SN+Cytokines/Analysis Carli")
-#counts <- read.csv(file.path("Rawcounts.csv"))
 
 metadata <- read.csv("Metadata.csv", row.names=1)
 counts <- read.csv("Rawcounts.csv", row.names=1)
 
-# Filter metadata to include only rows with treatment identifier "IL4IL13"
-metadata <- metadata %>% filter(Treatment %in% c("CTR", "IL4IL13"))
+# Filter metadata to include only rows with treatment identifier "TGF"
+metadata <- metadata %>% filter(Treatment %in% c("CTR", "TGF"))
+# Filter metadata to include only rows with Experiment identifier SN21-25
+metadata <- metadata %>% filter(Experiment %in% c("B", "C", "D", "E", "F"))
 # Save the filtered metadata
-write.csv(metadata, "Metadata_filtered_IL4IL13.csv")
+write.csv(metadata, "Metadata_filtered_TGFb-noSN20.csv")
 
 # Extract the row names (these will be the column names in rawcounts)
 selected_columns <- rownames(metadata)
 # Select the corresponding columns from rawcounts
 counts <- counts %>% select(all_of(selected_columns))
 # Save the filtered rawcounts data if needed
-write.csv(counts, "Rawcounts_filtered_IL4IL13.csv")
+write.csv(counts, "Rawcounts_filtered_TGFb-noSN20.csv")
 
 # check if order of samples is the same in metadata and count table
 rownames(metadata)
@@ -80,12 +81,7 @@ Create DESEq2 object
 ddsoverall <- DESeqDataSetFromMatrix(countData = counts, 
                                   colData = metadata, 
                                   design = ~ Experiment + Treatment)
-ddsoverall$Treatment <- factor(ddsoverall$Treatment, levels = c("CTR", "IL4IL13"))
-
-#ddsoverall<- DESeq(ddsoverall)
-
-# Now you can access results with the desired contrast name
-#resultsNames(ddsoverall)
+ddsoverall$Treatment <- factor(ddsoverall$Treatment, levels = c("CTR", "TGF"))
 ```
 
 Prefiltering
@@ -96,26 +92,21 @@ ddsoverall <- ddsoverall[keep,]
 
 DEA + fit raw counts to negative binomial model, count normalization 
 ```{r}
-ddsoverall <- estimateSizeFactors(ddsoverall)
 ddsoverall <- DESeq(ddsoverall)
-
-resultsNames(ddsoverall)
 
 # Generate data table of epithelial data
 resoverall <- results(ddsoverall)
-
-
-plotDispEsts(ddsoverall)
 resultsNames(ddsoverall)
-colData(ddsoverall)
+
+#Plot dispersion plot
+plotDispEsts(ddsoverall)
 ```
 
 Count normalization #waarom normaliseer je 2x? DESEQ2 doet dit al? - kan je niet de genormaliseerde data van Deseq2 niet exporteren?
 ```{r}
 normalized_counts <- counts(ddsoverall, normalized = TRUE)
 log2_normalized_counts <- log2(normalized_counts + 1)  # Adding 1 to avoid log(0)
-write.xlsx(as.data.frame(log2_normalized_counts), "log2normalized_counts.xlsx", rowNames = TRUE)
-
+write.xlsx(as.data.frame(log2_normalized_counts), "log2normalized_counts_TGFb-noSN20.xlsx", rowNames = TRUE)
 ```
 
 Log transformation 
@@ -127,7 +118,6 @@ Heatmap of sample correlation values
 ```{r}
 vsd_mat <- assay(vsd_overall)
 vsd_cor <- cor(vsd_mat)
-vsd_cor
 
 pheatmap(vsd_cor, annotation = select(metadata, Treatment), clustering_distance_rows = "euclidean")
 ```
@@ -182,18 +172,18 @@ ggplot(new_PCA, aes(PC1, PC2, color=cell_type, shape=condition)) +
 
 Extract results 
 ```{r}
-sub_results <- results(ddsoverall, contrast = c("Treatment","CTR", "IL4IL13"),
+sub_results <- results(ddsoverall, contrast = c("Treatment","CTR", "TGF"),
                        alpha = 0.5)
 #head(sub_results)
 sub_results_LFC <- results(ddsoverall,
-                       name = "Treatment_IL4IL13_vs_CTR",
+                       name = "Treatment_TGF_vs_CTR",
                        alpha = 0.5)
 ```
 
 LFC, MA plot 
 ```{r}
 #plot simple MA plot
-plotMA(sub_results_LFC, ylim = c(-10, 10)) #edit
+plotMA(sub_results_LFC, ylim = c(-10, 8)) #edit
 DESeq2::plotMA(sub_results, ylim = c(-10, 10))
 
 
@@ -217,13 +207,13 @@ sub_res_sig <- subset(sub_res_df, padj < 0.05) %>%
   arrange(padj)
 
 #Save results table
-write.csv(sub_res_sig, file = "./Results IL4_IL13/LogFoldChanges_full.csv", row.names = TRUE)
+write.csv(sub_res_sig, file = "./Results TGFb-noSN20/LogFoldChanges_full_TGFb-noSN20.csv", row.names = TRUE)
 ```
 
 Extract the normalized counts
 ```{r}
 normalized_counts <- counts(ddsoverall, normalized = TRUE) #extracted counts normalized by estimateSIzeFactors()
-write.csv(normalized_counts, file.path("./Results IL4_Il13/Normalized Counts.csv"))
+write.csv(normalized_counts, file.path("./Results TGFb-noSN20/Normalized Counts TGFb-noSN20.csv"))
 ```
 
 plot volcanoplot using enhanced volcano
@@ -232,9 +222,9 @@ EnhancedVolcano(sub_res_sig,
                 lab = rownames(sub_res_sig),
                 x = 'log2FoldChange',
                 y = 'padj',
-                xlim = c(-5, 5), #edit
-                ylim = c(0, 100), #edit
-                title = "Effect of IL4+IL13 on hPSC-dericed sensory neurons",
+                xlim = c(-5, 7), #edit
+                ylim = c(0, 25), #edit
+                title = "Effect of TGFb on hPSC-derived sensory neurons",
                 pCutoff = 0.05,
                 FCcutoff = 1.5, #1
                 pointSize = 2.0,
@@ -257,7 +247,7 @@ pheatmap(sig_norm_counts,
          show_rownames = F, 
          annotation = select(metadata, Treatment),
          scale = "row",
-         dist.method = "euclidean") 
+         clustering_distance_rows = "euclidean") 
 ```
 
 ```{r}
