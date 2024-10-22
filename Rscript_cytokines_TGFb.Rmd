@@ -55,19 +55,19 @@ setwd("G:/My Drive/RNAseq/Carli_SN+Cytokines/Analysis Carli")
 metadata <- read.csv("Metadata.csv", row.names=1)
 counts <- read.csv("Rawcounts.csv", row.names=1)
 
-# Filter metadata to include only rows with treatment identifier "TGF"
+# Filter metadata to include only rows with treatment identifier "IL4IL13 or TGF"
 metadata <- metadata %>% filter(Treatment %in% c("CTR", "TGF"))
 # Filter metadata to include only rows with Experiment identifier SN21-25
-metadata <- metadata %>% filter(Experiment %in% c("B", "C", "D", "E", "F"))
+#metadata <- metadata %>% filter(Experiment %in% c("B", "C", "D", "E", "F"))
 # Save the filtered metadata
-write.csv(metadata, "Metadata_filtered_TGFb-noSN20.csv")
+write.csv(metadata, "Metadata_filtered_IL4IL13-noSN20.csv")
 
 # Extract the row names (these will be the column names in rawcounts)
 selected_columns <- rownames(metadata)
 # Select the corresponding columns from rawcounts
 counts <- counts %>% select(all_of(selected_columns))
 # Save the filtered rawcounts data if needed
-write.csv(counts, "Rawcounts_filtered_TGFb-noSN20.csv")
+write.csv(counts, "Rawcounts_filtered_IL4IL13-noSN20.csv")
 
 # check if order of samples is the same in metadata and count table
 rownames(metadata)
@@ -106,7 +106,7 @@ Count normalization #waarom normaliseer je 2x? DESEQ2 doet dit al? - kan je niet
 ```{r}
 normalized_counts <- counts(ddsoverall, normalized = TRUE)
 log2_normalized_counts <- log2(normalized_counts + 1)  # Adding 1 to avoid log(0)
-write.xlsx(as.data.frame(log2_normalized_counts), "log2normalized_counts_TGFb-noSN20.xlsx", rowNames = TRUE)
+write.xlsx(as.data.frame(log2_normalized_counts), "log2normalized_counts_IL4IL13-noSN20.xlsx", rowNames = TRUE)
 ```
 
 Log transformation 
@@ -144,6 +144,37 @@ ggplot(pca_variance_df, aes(x = PC, y = Variance)) +
   scale_x_continuous(breaks = pca_variance_df$PC)
 ```
 
+PCA of PC2 vs PC3 - and - PC1 vs PC3
+```{r}
+# Extract the assay data from variance-stabilizing transformation (VST)
+pca_data_vsd <- plotPCA(vsd_overall, intgroup = "Treatment", returnData = TRUE)
+
+# pca_data_vsd now contains PC1 and PC2 (you can extract PC3 from vsd)
+# Perform PCA manually on the VST-transformed data to get PC3
+pca_manual <- prcomp(t(assay(vsd_overall)))
+
+# Add PC3 to the PCA data returned by plotPCA
+pca_data_vsd$PC3 <- pca_manual$x[, 3]
+# Add PC4 to the PCA data returned by plotPCA
+pca_data_vsd$PC4 <- pca_manual$x[, 4]
+# Add PC5 to the PCA data returned by plotPCA
+pca_data_vsd$PC5 <- pca_manual$x[, 5]
+
+# Plot PC2 vs PC3 using ggplot2
+ggplot(pca_data_vsd, aes(x = PC2, y = PC3, color = Treatment, label = name)) +
+  geom_point(size = 3) +
+  geom_text_repel(size = 3, max.overlaps = 10) + 
+  theme_minimal() +
+  labs(x = "PC2", y = "PC3", title = "PCA: PC2 vs PC3")
+
+# Plot PC1 vs PC3 using ggplot2 - adapt to plot PC-values of choice
+ggplot(pca_data_vsd, aes(x = PC1, y = PC3, color = Treatment, label = name)) +
+  geom_point(size = 3) +
+  geom_text_repel(size = 3, max.overlaps = 10) + 
+  theme_minimal() +
+  labs(x = "PC1", y = "PC3", title = "PCA: PC1 vs PC3")
+```
+
 PCA (different options) directly on the vst values instead 
 ```{r}
 # simple PCA 
@@ -172,11 +203,11 @@ ggplot(new_PCA, aes(PC1, PC2, color=cell_type, shape=condition)) +
 
 Extract results 
 ```{r}
-sub_results <- results(ddsoverall, contrast = c("Treatment","CTR", "TGF"),
+sub_results <- results(ddsoverall, contrast = c("Treatment","CTR", "IL4IL13"),
                        alpha = 0.5)
 #head(sub_results)
 sub_results_LFC <- results(ddsoverall,
-                       name = "Treatment_TGF_vs_CTR",
+                       name = "Treatment_IL4IL13_vs_CTR",
                        alpha = 0.5)
 ```
 
@@ -207,13 +238,13 @@ sub_res_sig <- subset(sub_res_df, padj < 0.05) %>%
   arrange(padj)
 
 #Save results table
-write.csv(sub_res_sig, file = "./Results TGFb-noSN20/LogFoldChanges_full_TGFb-noSN20.csv", row.names = TRUE)
+write.csv(sub_res_sig, file = "./Results IL4_IL13-noSN20/LogFoldChanges_full_IL4IL13-noSN20.csv", row.names = TRUE)
 ```
 
 Extract the normalized counts
 ```{r}
 normalized_counts <- counts(ddsoverall, normalized = TRUE) #extracted counts normalized by estimateSIzeFactors()
-write.csv(normalized_counts, file.path("./Results TGFb-noSN20/Normalized Counts TGFb-noSN20.csv"))
+write.csv(normalized_counts, file.path("./Results IL4_IL13-noSN20/Normalized Counts IL4IL13-noSN20.csv"))
 ```
 
 plot volcanoplot using enhanced volcano
@@ -222,9 +253,9 @@ EnhancedVolcano(sub_res_sig,
                 lab = rownames(sub_res_sig),
                 x = 'log2FoldChange',
                 y = 'padj',
-                xlim = c(-5, 7), #edit
-                ylim = c(0, 25), #edit
-                title = "Effect of TGFb on hPSC-derived sensory neurons",
+                xlim = c(-10, 12), #edit
+                ylim = c(0, 50), #edit
+                title = "Effect of IL4/IL13 on hPSC-derived sensory neurons",
                 pCutoff = 0.05,
                 FCcutoff = 1.5, #1
                 pointSize = 2.0,
