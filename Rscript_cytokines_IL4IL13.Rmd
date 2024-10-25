@@ -238,7 +238,10 @@ sub_res_sig <- subset(sub_res_df, padj < 0.05) %>%
   arrange(padj)
 
 #Save results table
-##write.csv(sub_res_sig, file = "./Results IL4_IL13-noSN20/LogFoldChanges_full_IL4IL13-noSN20.csv", row.names = TRUE)
+write.csv(sub_res_sig, file = "./Results IL4_IL13/LogFoldChanges-sig_IL4IL13.csv", row.names = TRUE)
+
+#Save results table
+write.csv(sub_res_df, file = "./Results IL4_IL13/LogFoldChanges_full_IL4IL13.csv", row.names = TRUE)
 ```
 
 Extract the normalized counts

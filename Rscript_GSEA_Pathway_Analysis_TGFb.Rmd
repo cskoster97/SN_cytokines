@@ -1,0 +1,303 @@
+---
+title: "Rscript GSEA Pathway Analysis MD"
+output: html_document
+date: "2023-03-03"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
+BiocManager::install("fgsea")
+BiocManager::install("data.table")
+BiocManager::install("ggplot2")
+BiocManager::install("ggplot")
+BiocManager::install("tidyverse")
+BiocManager::install("readr")
+BiocManager::install("tibble")
+BiocManager::install("dplyr")
+BiocManager::install("enrichplot")
+install.packages("digest")
+install.packages("openxlsx")
+```
+
+```{r}
+library(fgsea)
+library(data.table)
+library(ggplot2)
+#library(ggplot)
+library(tidyverse)
+library(readr)
+library(tibble)
+library(dplyr)
+library(digest)
+library(enrichplot)
+library(openxlsx)
+#packageVersion("fGSEA")
+```
+
+Load the metadata and rawcount.csv file
+
+```{r}
+# load the metadata and rowcount.csv file
+setwd("G:/My Drive/RNAseq/Carli_SN+Cytokines/Analysis Carli/Results TGFb/")
+
+metadata <- read.csv("Metadata_filtered_TGFb.csv", row.names=1)
+counts <- read.csv("Rawcounts_filtered_TGFb.csv", row.names=1)
+
+# check if order of samples is the same in metadata and count table
+rownames(metadata)
+colnames(counts)
+all(rownames(metadata) == colnames(counts))
+```
+
+Load comparison dataset (all genes)
+```{r}
+sig_DEGs <- read.csv("LogFoldChanges_full_TGFb.csv", sep = ",", row.names = 1)
+sig_DEGs <- rownames_to_column(sig_DEGs, "Symbol")
+```
+
+Select columns
+```{r}
+stat <- sig_DEGs %>% select(1, stat)
+ranks <- deframe(stat)
+ranks <- sort(ranks, decreasing = TRUE)
+head(ranks, 20)
+
+# Old code above removed gene names from Cell1_ranks, below keeps both statistics and gene names
+# Extract the statistics column from Cell1_stat
+#stats <- Cell1_stat$stat
+# Use the row names of Cell1_stat as names for the statistics
+#Cell1_ranks <- stats
+#names(Cell1_ranks) <- rownames(Cell1_stat)
+```
+
+Load the pathways
+
+```{r}
+H_pathways <- gmtPathways("G:/My Drive/RNAseq/Carli_SN+Cytokines/Analysis Carli/GSEA/h.all.v2023.1.Hs.symbols.gmt")
+c2CP_pathways <- gmtPathways("G:/My Drive/RNAseq/Carli_SN+Cytokines/Analysis Carli/GSEA/c2.cp.v2023.1.Hs.symbols.gmt")
+c5BP_pathways <- gmtPathways("G:/My Drive/RNAseq/Carli_SN+Cytokines/Analysis Carli/GSEA/c5.go.bp.v2023.1.Hs.symbols.gmt")
+c7IM_pathways <- gmtPathways("G:/My Drive/RNAseq/Carli_SN+Cytokines/Analysis Carli/GSEA/c7.all.v2023.2.Hs.symbols.gmt")
+```
+
+
+Show the first few pathways, and within those, show only the first few genes
+
+```{r}
+H_pathways %>%
+  head() %>%
+  lapply(head)
+c2CP_pathways %>%
+  head() %>%
+  lapply(head)
+c5BP_pathways %>% #change names of pathways everywheree!!
+  head() %>%
+  lapply(head)
+c7IM_pathways %>% #change names of pathways everywheree!!
+  head() %>%
+  lapply(head)
+```
+
+
+Run GSEA, tidy up the results and then show in nice table
+
+```{r}
+#Run the GSEA
+fgsea_H <- fgsea(pathways = H_pathways,
+                  stats = ranks,
+                  minSize  = 5,
+                  maxSize  = 1000,
+                  nperm = 10000)
+
+#Tidy the table
+tidy_fgsea_H <- fgsea_H %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+tidy_fgsea_H %>%
+  dplyr::select(-leadingEdge, -ES, -nMoreExtreme) %>%
+  arrange(padj) %>%
+  DT::datatable()
+
+#Export table to excel
+datatable_data <- as.data.frame(tidy_fgsea_H) # Extract the data from the DT::datatable
+wb <- createWorkbook() # Create a new Excel workbook
+addWorksheet(wb, "DataTable") # Add a worksheet to the workbook
+writeDataTable(wb, "DataTable", datatable_data) # Write the data from the DT::datatable to the Excel worksheet
+saveWorkbook(wb, "H-pathways-TGFb.xlsx") # Save the workbook to a file
+
+# Plot Enrichment Scores
+filtered_fgsea_H <- tidy_fgsea_H %>% filter(padj<0.05)
+filtered_fgsea_H$pathway <- sub("HALLMARK_","",filtered_fgsea_H$pathway)
+ggplot(filtered_fgsea_H, aes(reorder(pathway, NES), NES)) +
+  geom_col(fill='dodgerblue') +
+  coord_flip() +
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="GSEA of Molecular Hallmarks Pathways in Sensory Neurons exposed to TGFb") +
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5, vjust = 0.5),  # Center the title
+    axis.text.y = element_text(size = 12)  # Adjust axis text font size
+  )
+```
+
+
+```{r}
+fgsea_c2CP <- fgsea(pathways = c2CP_pathways,
+                          stats = ranks,
+                          minSize  = 5,
+                          maxSize  = 1000,
+                          nperm = 10000)
+
+tidy_fgsea_c2CP <- fgsea_c2CP %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+tidy_fgsea_c2CP %>%
+  dplyr::select(-leadingEdge, -ES, -nMoreExtreme) %>%
+  arrange(padj) %>%
+  DT::datatable()
+
+datatable_data <- as.data.frame(tidy_fgsea_c2CP) # Extract the data from the DT::datatable
+wb <- createWorkbook() # Create a new Excel workbook
+addWorksheet(wb, "DataTable") # Add a worksheet to the workbook
+writeDataTable(wb, "DataTable", datatable_data) # Write the data from the DT::datatable to the Excel worksheet
+saveWorkbook(wb, "C2CP-pathways-TGFb.xlsx") # Save the workbook to a file
+
+#plot GSEA
+collapsed_c2CP <- collapsePathways(fgsea_c2CP[order(pval)][padj < 0.05],
+                                         c2CP_pathways,
+                                         ranks)
+main_c2CP <- fgsea_c2CP[pathway %in%  
+                                    collapsed_c2CP$mainPathways][order(-NES), pathway]
+main_res_c2CP <- fgsea_c2CP[fgsea_c2CP$pathway %in% main_c2CP] 
+main_res_c2CP$pathway <- sub("^REACTOME_|^WP_", "",main_res_c2CP$pathway)
+
+num_top_pathways <- 50 # Choose the number of top pathways to display
+
+# Select the top pathways based on NES
+top_main_res_c2CP <- main_res_c2CP %>%
+  top_n(num_top_pathways, wt = NES)
+
+ggplot(top_main_res_c2CP, aes(reorder(pathway, NES), NES)) +
+  geom_col(fill='dodgerblue') +
+  coord_flip() +
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="GSEA of Molecular Canonical Pathways in Sensory Neurons exposed to TGFb") + 
+  theme_minimal() +
+    theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5, vjust = 0.5),  # Center the title
+    axis.text.y = element_text(size = 12)  # Adjust axis text font size
+    )
+```
+
+```{r}
+fgsea_c5BP <- fgsea(pathways = c5BP_pathways,
+                  stats = ranks,
+                  minSize  = 5,
+                  maxSize  = 1000,
+                  nperm = 10000)
+
+tidy_fgsea_c5BP <- fgsea_c5BP %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+tidy_fgsea_c5BP %>%
+  dplyr::select(-leadingEdge, -ES, -nMoreExtreme) %>%
+  arrange(padj) %>%
+  DT::datatable()
+
+datatable_data <- as.data.frame(tidy_fgsea_c5BP) # Extract the data from the DT::datatable
+wb <- createWorkbook() # Create a new Excel workbook
+addWorksheet(wb, "DataTable") # Add a worksheet to the workbook
+writeDataTable(wb, "DataTable", datatable_data) # Write the data from the DT::datatable to the Excel worksheet
+saveWorkbook(wb, "C5BP-pathways-TGFb.xlsx") # Save the workbook to a file
+
+collapsed_c5BP <- collapsePathways(fgsea_c5BP[order(pval)][padj < 0.05],
+                                         c5BP_pathways,
+                                         ranks)
+main_c5BP <- fgsea_c5BP[pathway %in% collapsed_c5BP$mainPathways][order(-NES), pathway]
+main_res_c5BP <- fgsea_c5BP[fgsea_c5BP$pathway %in% main_c5BP] 
+main_res_c5BP$pathway <- sub("GOBP_","",main_res_c5BP$pathway)
+
+num_top_pathways <- 25 # Choose the number of top pathways to display
+
+# Select the top pathways based on NES
+top_main_res_c5BP <- main_res_c5BP %>%
+  top_n(num_top_pathways, wt = NES)
+
+ggplot(top_main_res_c5BP, aes(reorder(pathway, NES), NES)) +
+  geom_col(fill='dodgerblue') +
+  coord_flip() +
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="GSEA of Biological Process Ontology in Sensory Neurons exposed to TGFb") + 
+  theme_minimal()
+  + theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5, vjust = 0.5),  # Center the title
+    axis.text.y = element_text(size = 12)  # Adjust axis text font size
+  )
+```
+
+```{r}
+
+fgsea_c7IM <- fgsea(pathways = c7IM_pathways,
+                  stats = ranks,
+                  minSize  = 5,
+                  maxSize  = 1000,
+                  nperm = 10000)
+
+###Added by Carli
+tidy_fgsea_c7IM <- fgsea_c7IM %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+tidy_fgsea_c7IM %>%
+  dplyr::select(-leadingEdge, -ES, -nMoreExtreme) %>%
+  arrange(padj) %>%
+  DT::datatable()
+
+datatable_data <- as.data.frame(tidy_fgsea_c7IM) # Extract the data from the DT::datatable
+wb <- createWorkbook() # Create a new Excel workbook
+addWorksheet(wb, "DataTable") # Add a worksheet to the workbook
+writeDataTable(wb, "DataTable", datatable_data) # Write the data from the DT::datatable to the Excel worksheet
+saveWorkbook(wb, "C7IM-pathways-TGFb.xlsx") # Save the workbook to a file
+
+collapsed_c7IM <- collapsePathways(fgsea_c7IM[order(pval)][padj < 0.05],
+                                         c7IM_pathways,
+                                         ranks)
+main_c7IM <- fgsea_c7IM[pathway %in% collapsed_c7IM$mainPathways][order(-NES), pathway]
+main_res_c7IM <- fgsea_c7IM[fgsea_c7IM$pathway %in% main_c7IM] 
+main_res_c7IM$pathway <- sub("GOBP_","",main_res_c7IM$pathway)
+
+num_top_pathways <- 50 # Choose the number of top pathways to display
+
+# Select the top pathways based on NES
+top_main_res_c7IM <- main_res_c7IM %>%
+  top_n(num_top_pathways, wt = NES)
+
+ggplot(top_main_res_c7IM, aes(reorder(pathway, NES), NES)) +
+  geom_col(fill='dodgerblue') +
+  coord_flip() +
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="GSEA of Immunologic Signiatures in Sensory Neurons exposed to TGFb") + 
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5, vjust = 0.5),  # Center the title
+    axis.text.y = element_text(size = 12)  # Adjust axis text font size
+  )
+```
+
+
+```{r}
+plotEnrichment(Th2_pathway[["Th2_genes"]], 
+                 stats = Cell1_ranks)
+
+plotEnrichment(Th2_GO_pathway[["Th2_GO_genes"]], 
+                 stats = Cell1_ranks)
+
+plotEnrichment(SNP_asthma_pathway[["Zaid Asthma list"]], 
+                 stats = Cell1_ranks)
+
+plotEnrichment(MastCellDiff_pathway[["MastCellDiff_genes"]], 
+                 stats = Cell1_ranks)
+```                 
+                 
