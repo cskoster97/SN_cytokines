@@ -1,0 +1,131 @@
+---
+title: "Cell Deconvolution"
+author: "Carli"
+date: "2024-11-12"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Install the needed packages (xCell)
+```{r}
+install.packages("remotes")
+remotes::install_version("fastmap", version = "1.2.0")
+remotes::install_version("htmltools", version = "0.5.7")
+remotes::install_version("vctrs", version = "0.6.4")
+library(fastmap)
+
+if (!requireNamespace("devtools", quietly = TRUE)) install.packages("devtools")
+devtools::install_github("dviraran/xCell")
+library(xCell)
+
+library(pheatmap)
+
+```
+
+Run deconvolution analysis with xCell:
+```{R}
+# Example gene expression matrix
+# Rows = genes, columns = samples
+expression_matrix <- read.csv("G:/My Drive/RNAseq/Carli_SN+Cytokines/Analysis Carli/Rawcounts.csv", row.names = 1)
+
+# Run xCell on your data
+result <- xCellAnalysis(expression_matrix)
+
+# Visualize the enrichment scores with a heatmap
+pheatmap(result)
+
+# Save the enrichment scores to a CSV file
+write.csv(result, "xCell_enrichment_results.csv")
+
+```
+
+```{r}
+# Check if "Sensory Neurons" exists in your results (replace with actual cell type name)
+sensory_neuron_scores <- result["Neurons", ]
+
+# Create a bar plot of sensory neuron enrichment scores across samples
+barplot(sensory_neuron_scores, 
+        names.arg = colnames(result), 
+        main = "Sensory Neuron Enrichment Across Samples",
+        las = 2,  # Rotate the x-axis labels for better readability
+        col = "steelblue")
+
+# Check the enrichment scores for all cell types
+head(result)
+
+# Plot all cell types across all samples using a heatmap
+pheatmap(result, 
+         scale = "row",  # Normalize by row (cell type)
+         clustering_distance_rows = "euclidean", 
+         clustering_distance_cols = "euclidean", 
+         clustering_method = "complete", 
+         color = colorRampPalette(c("blue", "white", "red"))(50))
+
+
+```
+
+Manually add sensory neuron dataset
+```{r}
+install.packages("GSVA")
+library(GSVA)
+
+sensory_neuron_genes <- c("SCN9A", "TRPV1", "MAP2", "SLC17A6", "TTR", "NGF", "TRPA1")  # Example list of sensory neuron markers
+
+# Create a list of custom gene sets (including sensory neurons)
+custom_gene_sets <- list(Sensory_Neurons = sensory_neuron_genes)
+
+# Convert the expression matrix (which is a data.frame) to a numeric matrix
+expression_matrix <- as.matrix(expression_matrix)
+
+# Run ssGSEA using your expression matrix
+gsva_results <- gsva(expression_matrix, custom_gene_sets, method = "ssgsea")
+
+# View the results (e.g., sensory neuron enrichment across samples)
+gsva_results
+
+# Visualize sensory neuron enrichment across samples using a barplot
+barplot(gsva_results["Sensory_Neurons",], 
+        names.arg = colnames(expression_matrix), 
+        main = "Sensory Neuron Enrichment Across Samples",
+        las = 2,  # Rotate the x-axis labels
+        col = "steelblue")
+
+# Extract the sensory neuron enrichment scores (which should be a vector)
+sensory_neuron_scores <- gsva_results["Sensory_Neurons", ]
+
+# Convert sensory neuron scores to a 1x24 matrix, aligning the column names with the result
+sensory_neuron_scores_matrix <- matrix(sensory_neuron_scores, nrow = 1)
+colnames(sensory_neuron_scores_matrix) <- colnames(result)
+
+# Compare the column names in `result` and the names in `sensory_neuron_scores`
+all(colnames(result) == names(sensory_neuron_scores))
+
+# Convert the sensory neuron scores to a matrix format to add as a row
+sensory_neuron_scores_matrix <- as.matrix(sensory_neuron_scores)
+
+# Change the row name from '1' to 'Sensory Neurons'
+rownames(sensory_neuron_scores_matrix) <- "Sensory Neurons"
+
+# Add the sensory neuron scores as a new row to `result`
+result_with_sensory <- rbind(result, Sensory_Neurons = sensory_neuron_scores_matrix)
+
+# Visualize the combined result with a heatmap
+pheatmap(result_with_sensory)
+
+```
+
+Run deconvolution analysis with xCell:
+```{R}
+install.packages("dplyr", version = "0.6.4")
+library(dplyr)
+metadata <- read.csv("G:/My Drive/RNAseq/Carli_SN+Cytokines/Analysis Carli/Metadata.csv", row.names=1)
+counts <- read.csv("G:/My Drive/RNAseq/Carli_SN+Cytokines/Analysis Carli/Rawcounts.csv", row.names=1)
+
+# Filter metadata to include only rows with treatment identifier "IL4IL13 or TGF"
+metadata <- metadata %>% filter(Treatment %in% "CTR")
+# Filter metadata to include only rows with Experiment identifier SN21-25
+metadata <- metadata %>% filter(Experiment %in% c("B", "C", "D", "E", "F"))
+
+
+```

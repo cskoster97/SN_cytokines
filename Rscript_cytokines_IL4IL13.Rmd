@@ -10,9 +10,10 @@ If necessary, download the required libraries
 ```{r}
 if (!require("BiocManager", quietly = TRUE))
   install.packages("BiocManager")
-BiocManager::install(version = "3.16")
+BiocManager::install(version = "3.20")
 
 BiocManager::install("DESeq2")
+BiocManager::install("edgeR")
 BiocManager::install("tidyverse")
 BiocManager::install("ggrepel")
 install.packages("ggplot2")
@@ -24,6 +25,7 @@ BiocManager::install("PCAtools")
 #BiocManager::install("apeglm")
 #BiocManager::install("annotables")
 install.packages("openxlsx")
+BiocManager::install("EnhancedVolcano")
 ```
 
 Load required libraries
@@ -50,7 +52,7 @@ Background info and help with DESeq2
 Load metadata and counts files
 ```{r}
 # load the metadata and rowcount.csv file
-setwd("G:/My Drive/RNAseq/Carli_SN+Cytokines/Analysis Carli")
+setwd("G:/Mijn Drive/RNAseq/Carli_SN+Cytokines/Analysis Carli")
 
 metadata <- read.csv("Metadata.csv", row.names=1)
 counts <- read.csv("Rawcounts.csv", row.names=1)

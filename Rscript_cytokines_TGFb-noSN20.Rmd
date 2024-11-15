@@ -1,0 +1,353 @@
+---
+title: "Rscript DeSeq2 Analysis SN + cytokines"
+output: html_document
+date: "2023-03-23"
+editor_options: 
+  chunk_output_type: console
+---
+
+If necessary, download the required libraries
+```{r}
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install(version = "3.16")
+
+BiocManager::install("DESeq2")
+BiocManager::install("tidyverse")
+BiocManager::install("ggrepel")
+install.packages("ggplot2")
+install.packages("ggfortify")
+BiocManager::install("RColorBrewer")
+BiocManager::install("pheatmap")
+install.packages("reshape")
+BiocManager::install("PCAtools")
+#BiocManager::install("apeglm")
+#BiocManager::install("annotables")
+install.packages("openxlsx")
+```
+
+Load required libraries
+```{r}
+library("DESeq2")
+library("edgeR")
+library("tidyverse")
+library("ggrepel")
+library("ggplot2")
+library("ggfortify")
+library("RColorBrewer")
+library("pheatmap")
+library("reshape")
+library(openxlsx)
+library("EnhancedVolcano") #install BioC::Manager and then EnhancedVolcano
+#library("annotables") #genesymbols aan ID matchen
+```
+
+Background info and help with DESeq2
+```{r}
+#browseVignettes(package = "DESeq2")
+```
+
+Load metadata and counts files
+```{r}
+# load the metadata and rowcount.csv file
+setwd("G:/My Drive/RNAseq/Carli_SN+Cytokines/Analysis Carli")
+
+metadata <- read.csv("Metadata.csv", row.names=1)
+counts <- read.csv("Rawcounts.csv", row.names=1)
+
+# Filter metadata to include only rows with treatment identifier "IL4IL13 or TGF"
+metadata <- metadata %>% filter(Treatment %in% c("CTR", "TGF"))
+# Filter metadata to include only rows with Experiment identifier SN21-25
+metadata <- metadata %>% filter(Experiment %in% c("B", "C", "D", "E", "F"))
+# Save the filtered metadata
+##write.csv(metadata, "Metadata_filtered_IL4IL13-noSN20.csv")
+
+# Extract the row names (these will be the column names in rawcounts)
+selected_columns <- rownames(metadata)
+# Select the corresponding columns from rawcounts
+counts <- counts %>% select(all_of(selected_columns))
+# Save the filtered rawcounts data if needed
+##write.csv(counts, "Rawcounts_filtered_IL4IL13-noSN20.csv")
+
+# check if order of samples is the same in metadata and count table
+rownames(metadata)
+colnames(counts)
+all(rownames(metadata) == colnames(counts))
+```
+
+Create DESEq2 object
+```{r}
+# remember that DESeq2 will output results for the last term in the formula 
+ddsoverall <- DESeqDataSetFromMatrix(countData = counts, 
+                                  colData = metadata, 
+                                  design = ~ Experiment + Treatment)
+ddsoverall$Treatment <- factor(ddsoverall$Treatment, levels = c("CTR", "TGF"))
+```
+
+Prefiltering
+```{r}
+keep <- rowSums(counts(ddsoverall)) >= 10
+ddsoverall <- ddsoverall[keep,]
+```
+
+DEA + fit raw counts to negative binomial model, count normalization 
+```{r}
+ddsoverall <- DESeq(ddsoverall)
+
+# Generate data table of epithelial data
+resoverall <- results(ddsoverall)
+resultsNames(ddsoverall)
+
+#Plot dispersion plot
+plotDispEsts(ddsoverall)
+```
+
+Count normalization #waarom normaliseer je 2x? DESEQ2 doet dit al? - kan je niet de genormaliseerde data van Deseq2 niet exporteren?
+```{r}
+normalized_counts <- counts(ddsoverall, normalized = TRUE)
+log2_normalized_counts <- log2(normalized_counts + 1)  # Adding 1 to avoid log(0)
+##write.xlsx(as.data.frame(log2_normalized_counts), "log2normalized_counts_IL4IL13-noSN20.xlsx", rowNames = TRUE)
+```
+
+Log transformation 
+```{r}
+vsd_overall <- vst(ddsoverall, blind = TRUE)
+```
+
+Heatmap of sample correlation values
+```{r}
+vsd_mat <- assay(vsd_overall)
+vsd_cor <- cor(vsd_mat)
+
+pheatmap(vsd_cor, annotation = select(metadata, Treatment), clustering_distance_rows = "euclidean")
+```
+
+Plot a ScreePlot from the PCA analysis 
+```{r}
+# Perform PCA
+pca <- prcomp(t(vsd_cor), scale. = TRUE)
+
+# Calculate the proportion of variance explained by each component
+explained_variance <- pca$sdev^2 / sum(pca$sdev^2)
+
+# Create a data frame to store the results
+pca_variance_df <- data.frame(PC = 1:length(explained_variance),
+                              Variance = explained_variance)
+
+# ggplot2 scree plot
+ggplot(pca_variance_df, aes(x = PC, y = Variance)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(x = "Principal Components", y = "Proportion of Variance Explained",
+       title = "Scree Plot") +
+  scale_x_continuous(breaks = pca_variance_df$PC)
+```
+
+PCA of PC2 vs PC3 - and - PC1 vs PC3
+```{r}
+# Extract the assay data from variance-stabilizing transformation (VST)
+pca_data_vsd <- plotPCA(vsd_overall, intgroup = "Treatment", returnData = TRUE)
+
+# pca_data_vsd now contains PC1 and PC2 (you can extract PC3 from vsd)
+# Perform PCA manually on the VST-transformed data to get PC3
+pca_manual <- prcomp(t(assay(vsd_overall)))
+
+# Add PC3 to the PCA data returned by plotPCA
+pca_data_vsd$PC3 <- pca_manual$x[, 3]
+# Add PC4 to the PCA data returned by plotPCA
+pca_data_vsd$PC4 <- pca_manual$x[, 4]
+# Add PC5 to the PCA data returned by plotPCA
+pca_data_vsd$PC5 <- pca_manual$x[, 5]
+
+# Plot PC2 vs PC3 using ggplot2
+ggplot(pca_data_vsd, aes(x = PC2, y = PC3, color = Treatment, label = name)) +
+  geom_point(size = 3) +
+  geom_text_repel(size = 3, max.overlaps = 10) + 
+  theme_minimal() +
+  labs(x = "PC2", y = "PC3", title = "PCA: PC2 vs PC3")
+
+# Plot PC1 vs PC3 using ggplot2 - adapt to plot PC-values of choice
+ggplot(pca_data_vsd, aes(x = PC1, y = PC4, color = Treatment, label = name)) +
+  geom_point(size = 3) +
+  geom_text_repel(size = 3, max.overlaps = 10) + 
+  theme_minimal() +
+  labs(x = "PC1", y = "PC4", title = "PCA: PC1 vs PC4")
+```
+
+PCA (different options) directly on the vst values instead 
+```{r}
+# simple PCA 
+plotPCA(vsd_overall, intgroup = c("Experiment", "Treatment"))
+plotPCA(vsd_overall, intgroup = "Treatment")
+plotPCA(vsd_overall, intgroup = "Experiment")
+
+
+plotPCA(vsd_overall, intgroup = c("Experiment", "Treatment"))
+plotPCA(vsd_overall, intgroup = "Treatment")
+
+# labeled PCA (can change text with repel for white box)
+labeled_PCA <- plotPCA(vsd_overall, intgroup = c("Treatment"))
+labeled_PCA + geom_text_repel(aes_string(x = "PC1", y = "PC2", label = "name"), color = "black", size = 2)
+
+# PCA with different shapes 
+new_PCA <- plotPCA(vsd_overall, intgroup = c("Experiment", "Treatment"), returnData = TRUE)
+percentVar <- round(100 * attr(new_PCA, "percentVar"))
+
+ggplot(new_PCA, aes(PC1, PC2, color=cell_type, shape=condition)) +
+  geom_point(size=3) +
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) + 
+  ylab(paste0("PC2: ", percentVar[2], "% variance")) + 
+  coord_fixed()
+```
+
+Extract results 
+```{r}
+sub_results <- results(ddsoverall, contrast = c("Treatment","CTR", "TGF"),
+                       alpha = 0.5)
+#head(sub_results)
+sub_results_LFC <- results(ddsoverall,
+                       name = "Treatment_TGF_vs_CTR",
+                       alpha = 0.5)
+```
+
+LFC, MA plot 
+```{r}
+#plot simple MA plot
+plotMA(sub_results_LFC, ylim = c(-10, 8)) #edit
+DESeq2::plotMA(sub_results, ylim = c(-10, 10))
+
+
+# script below not used for extra MAplot...
+# Extract the relevant information from DESeqResults object
+result_data <- data.frame(
+  log2FoldChange = sub_results_LFC$log2FoldChange,
+  baseMean = sub_results_LFC$baseMean,
+  sig = sub_results_LFC$padj < 0.05  # Creating a binary indicator for significance
+)
+
+# Create the plot using ggplot
+ggplot(result_data, aes(x = log10(baseMean), y = log2FoldChange, color = sig)) + 
+  geom_point()
+```
+
+Obtain significant results table and order by padj
+```{r}
+sub_res_df <- data.frame(sub_results_LFC)
+sub_res_sig <- subset(sub_res_df, padj < 0.05) %>%
+  arrange(padj)
+
+#Save results table
+write.csv(sub_res_sig, file = "./Results TGFb-noSN20/LogFoldChanges-sig_TGFb-no20.csv", row.names = TRUE)
+#Save results table
+write.csv(sub_res_df, file = "./Results TGFb-noSN20/LogFoldChanges_full_TGFb-no20.csv", row.names = TRUE)
+```
+
+Extract the normalized counts
+```{r}
+normalized_counts <- counts(ddsoverall, normalized = TRUE) #extracted counts normalized by estimateSIzeFactors()
+##write.csv(normalized_counts, file.path("./Results IL4_IL13-noSN20/Normalized Counts IL4IL13-noSN20.csv"))
+```
+
+plot volcanoplot using enhanced volcano
+```{r}
+EnhancedVolcano(sub_res_sig,
+                lab = rownames(sub_res_sig),
+                x = 'log2FoldChange',
+                y = 'padj',
+                xlim = c(-10, 13), #edit
+                ylim = c(0, 50), #edit
+                title = "Effect of IL4/IL13 on hPSC-derived sensory neurons",
+                pCutoff = 0.05,
+                FCcutoff = 1.5, #1
+                pointSize = 2.0,
+                labSize = 4.0,
+                col=c('grey', 'green4', 'blue', 'red3'),
+                colAlpha = 1)
+```
+
+
+Heatmap of all genes 
+```{r}
+sig_norm_counts <- normalized_counts[rownames(sub_res_sig),]
+#display.brewer.all()
+heat.colors <- brewer.pal (n = 6, name = "RdYlBu")
+#display.brewer.all()
+
+pheatmap(sig_norm_counts, 
+         color = colorRampPalette(c("blue", "white", "red"))(50), 
+         cluster_rows = T,
+         show_rownames = F, 
+         annotation = select(metadata, Treatment),
+         scale = "row",
+         clustering_distance_rows = "euclidean") 
+```
+
+```{r}
+# Select top genes based on adjusted p-values
+top_genes <- rownames(sub_res_sig)[1:50]  # Get the gene names or rownames
+
+# Extract normalized counts for the top significant genes
+top_norm_counts <- normalized_counts[top_genes, ]
+
+# Optionally, log-transform the counts (adding 1 to avoid log of 0)
+log_transformed_counts <- log2(top_norm_counts + 1)
+
+# Create a heatmap using pheatmap
+pheatmap(log_transformed_counts, 
+         color = colorRampPalette(c("blue", "white", "red"))(50),
+         scale = "row",  # Scale by row to see relative expression
+         show_rownames = TRUE,
+         cluster_rows = TRUE,
+         annotation = select(metadata, Treatment))  # Add condition metadata
+
+```
+
+Heatmap of top50 genes (padj)
+```{r}
+padj_top50_genes <- head(sub_res_sig, 50)
+padj_top50_sig_norm_counts <- merge(normalized_counts, padj_top50_genes, by = 0)
+values_padj_top50_sig_norm_counts <- padj_top50_sig_norm_counts[,2:17]
+
+# Set the row names of the dataframe using the "row.names" column
+rownames(values_padj_top50_sig_norm_counts) <- padj_top50_sig_norm_counts$Row.names
+
+#padj_top50_genes_ID <- head(coculture_res_ID, 50)
+#row.names(values_padj_top50_sig_norm_counts) <- row.names(padj_top50_genes_ID)
+
+pheatmap(values_padj_top50_sig_norm_counts, 
+         color = colorRampPalette(c("blue", "white", "red"))(50), 
+         cluster_rows = T,
+         show_rownames = T, 
+         annotation = select(metadata, Treatment),
+         scale = "row") 
+```
+
+Plot expression of the top20 genes
+```{r}
+# already have ordered file, just extract top20 genes
+sub_top20 <- rownames(sub_res_sig [1:20, ])
+# extract normalized count values
+sub_top20_norm <- normalized_counts[sub_top20, ]
+# use melt to modify the format of the data frame
+melted_top20 <- data.frame(melt(sub_top20_norm))
+# DID NOT WORK: check the column header in the "melted" data frame
+# view(melted_EpCAM_top20)
+## add column names that make sense
+colnames(melted_top20) <- c("gene", "sample_ID", "normalized_counts")
+# add metadata to "melted" dataframe
+metadata$sample_ID <- rownames(metadata)
+melted_top20 <- merge(melted_top20, metadata)
+# plot
+ggplot(melted_top20) +
+  geom_point(aes(x = gene, y = normalized_counts, color = sample_ID)) +
+  scale_y_log10() +
+  xlab("Genes") +
+  ylab("Normalized Counts") +
+  ggtitle("coculture Top 20 Significant DE Genes") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(plot.title=element_text(hjust=0.5)) +
+  theme(plot.title.position = "plot")
+```
+
